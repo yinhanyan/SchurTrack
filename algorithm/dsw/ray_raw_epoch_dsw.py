@@ -87,7 +87,7 @@ def _copy_wire(block: WireBlock) -> WireBlock:
 
 
 class _PersistentDumpEmitter:
-    """Energy-doubling persistent prefix wrapper for SlowFD or AeroSketch."""
+    """No-seal dynamic-threshold wrapper for SlowFD or AeroSketch."""
 
     def __init__(self, method: str, d: int, ell: int):
         if method not in {"da2", "aero"}:
@@ -96,27 +96,19 @@ class _PersistentDumpEmitter:
         self.d = int(d)
         self.ell = int(ell)
         self.energy = 0.0
-        self.anchor: float | None = None
-        self.previous_time: int | None = None
-        self.sketch: SlowFdDump | FdDump | None = None
+        self.sketch: SlowFdDump | FdDump | None = self._new_sketch()
         self.completed = {
             "svd_calls": 0,
             "power_calls": 0,
             "simultaneous_calls": 0,
         }
         self.snapshot_rows = 0
-        self.sealed_residual_rows = 0
-        self.energy_epochs = 0
+        self.discarded_residual_rows = 0
 
     def _new_sketch(self) -> SlowFdDump | FdDump:
         if self.method == "da2":
             return SlowFdDump(self.d, self.ell, fast_fd=False)
         return FdDump(self.d, self.ell, fast_fd=True)
-
-    def _start_epoch(self, anchor: float) -> None:
-        self.anchor = float(anchor)
-        self.energy_epochs += 1
-        self.sketch = self._new_sketch()
 
     def _accumulate_sketch(self) -> None:
         if self.sketch is None:
@@ -129,26 +121,10 @@ class _PersistentDumpEmitter:
             )
         self.sketch = None
 
-    def _seal_residual(self) -> list[WireBlock]:
-        if (
-            self.sketch is None
-            or self.sketch.row == 0
-            or self.previous_time is None
-        ):
-            self._accumulate_sketch()
-            return []
-        rows = np.array(
-            self.sketch.sketch[: self.sketch.row],
-            dtype=np.float64,
-            copy=True,
-        )
-        block = _row_block(rows, self.d)
-        residual_rows = _storage_rows(block)
-        self.snapshot_rows += residual_rows
-        self.sealed_residual_rows += residual_rows
-        result = [_wire(self.previous_time, block)]
+    def _discard_residual(self) -> None:
+        if self.sketch is not None:
+            self.discarded_residual_rows += int(self.sketch.row)
         self._accumulate_sketch()
-        return result
 
     def update(self, row: npt.ArrayLike, current_time: int) -> list[WireBlock]:
         vector = np.asarray(row, dtype=np.float64).reshape(-1)
@@ -162,15 +138,11 @@ class _PersistentDumpEmitter:
 
         emitted: list[WireBlock] = []
         if self.sketch is None:
-            self._start_epoch(new_energy)
-        elif self.anchor is not None and new_energy >= 2.0 * self.anchor:
-            emitted.extend(self._seal_residual())
-            self._start_epoch(new_energy)
+            raise RuntimeError("cannot update a finalized dump emitter")
 
         assert self.sketch is not None
-        assert self.anchor is not None
         self.sketch.fit(vector.reshape(1, self.d))
-        threshold = max(self.anchor / self.ell, np.finfo(np.float64).tiny)
+        threshold = max(new_energy / self.ell, np.finfo(np.float64).tiny)
         if self.method == "da2":
             assert isinstance(self.sketch, SlowFdDump)
             rows = self.sketch.dump(threshold)
@@ -189,11 +161,11 @@ class _PersistentDumpEmitter:
                 )
                 emitted.append(_wire(current_time, block))
                 self.snapshot_rows += _storage_rows(block)
-        self.previous_time = int(current_time)
         return emitted
 
     def finalize(self) -> list[WireBlock]:
-        return self._seal_residual()
+        self._discard_residual()
+        return []
 
     def counters(self) -> dict[str, int]:
         result = dict(self.completed)
@@ -205,9 +177,11 @@ class _PersistentDumpEmitter:
                     self.sketch.simultaneous_calls
                 )
         result["snapshot_rows"] = int(self.snapshot_rows)
-        result["sealed_residual_rows"] = int(self.sealed_residual_rows)
-        result["discarded_residual_rows"] = 0
-        result["energy_epochs"] = int(self.energy_epochs)
+        result["sealed_residual_rows"] = 0
+        result["discarded_residual_rows"] = int(
+            self.discarded_residual_rows
+        )
+        result["energy_epochs"] = 0
         return result
 
     def row_num(self) -> int:
@@ -215,7 +189,7 @@ class _PersistentDumpEmitter:
 
 
 class _PersistentSchurEmitter:
-    """Energy-doubling prefix wrapper for the Schur core."""
+    """No-seal energy-doubling prefix wrapper for the Schur core."""
 
     def __init__(self, d: int, ell: int, audit: bool):
         self.d = int(d)
@@ -341,6 +315,12 @@ class RayRawEpochWindowCoordinator:
         self.query_svd_calls = 0
         self.forward: dict[tuple[int, int], list[WireBlock]] = {}
         self.reverse: dict[tuple[int, int], list[WireBlock]] = {}
+        self._forward_covariance: dict[tuple[int, int], np.ndarray] = {}
+        self._forward_cached_blocks: dict[tuple[int, int], int] = {}
+        self._reverse_covariance: dict[tuple[int, int], np.ndarray] = {}
+        self._reverse_cached_cutoff: dict[
+            tuple[int, int], int
+        ] = {}
 
     def add_forward(
         self,
@@ -370,7 +350,11 @@ class RayRawEpochWindowCoordinator:
         key = (int(site_id), int(epoch_id))
         copied = [_copy_wire(block) for block in payload]
         self.reverse[key] = copied
+        self._reverse_covariance.pop(key, None)
+        self._reverse_cached_cutoff.pop(key, None)
         self.forward.pop(key, None)
+        self._forward_covariance.pop(key, None)
+        self._forward_cached_blocks.pop(key, None)
         self.communication_cost += sum(
             _communication_floats(block) for block in copied
         )
@@ -384,9 +368,13 @@ class RayRawEpochWindowCoordinator:
         for key in list(self.forward):
             if key[1] != current_epoch:
                 del self.forward[key]
+                self._forward_covariance.pop(key, None)
+                self._forward_cached_blocks.pop(key, None)
         for key in list(self.reverse):
             if key[1] != previous_epoch:
                 del self.reverse[key]
+                self._reverse_covariance.pop(key, None)
+                self._reverse_cached_cutoff.pop(key, None)
 
     def finish_epoch(self, current_time: int | None = None) -> None:
         start = time.process_time_ns()
@@ -401,6 +389,47 @@ class RayRawEpochWindowCoordinator:
         self.processing_time_ns += time.process_time_ns() - start
 
     def _active_covariance(self) -> np.ndarray:
+        """Return the active covariance using query-only lazy caches."""
+
+        covariance = np.zeros((self.d, self.d), dtype=np.float64)
+        if self.time == 0:
+            return covariance
+        current_epoch = self.time // self.window_size
+        previous_epoch = current_epoch - 1
+        cutoff = self.time - self.window_size
+        for key, blocks in self.forward.items():
+            if key[1] != current_epoch:
+                continue
+            cached = self._forward_covariance.setdefault(
+                key, np.zeros((self.d, self.d), dtype=np.float64)
+            )
+            cached_blocks = self._forward_cached_blocks.get(key, 0)
+            for block in blocks[cached_blocks:]:
+                cached += _block_covariance(block, self.d)
+            self._forward_cached_blocks[key] = len(blocks)
+            covariance += cached
+        for key, blocks in self.reverse.items():
+            if key[1] != previous_epoch:
+                continue
+            cached = self._reverse_covariance.get(key)
+            cached_cutoff = self._reverse_cached_cutoff.get(key)
+            if cached is None or cached_cutoff is None:
+                cached = np.zeros((self.d, self.d), dtype=np.float64)
+                for block in blocks:
+                    if block[0] > cutoff:
+                        cached += _block_covariance(block, self.d)
+            elif cutoff > cached_cutoff:
+                for block in blocks:
+                    if cached_cutoff < block[0] <= cutoff:
+                        cached -= _block_covariance(block, self.d)
+            self._reverse_covariance[key] = cached
+            self._reverse_cached_cutoff[key] = cutoff
+            covariance += cached
+        return 0.5 * (covariance + covariance.T)
+
+    def _direct_active_covariance(self) -> np.ndarray:
+        """Reference implementation for cache-equivalence audits."""
+
         covariance = np.zeros((self.d, self.d), dtype=np.float64)
         if self.time == 0:
             return covariance
@@ -417,6 +446,13 @@ class RayRawEpochWindowCoordinator:
                     if block[0] > cutoff:
                         covariance += _block_covariance(block, self.d)
         return 0.5 * (covariance + covariance.T)
+
+    def audit_covariance_cache(self, current_time: int | None = None) -> float:
+        if current_time is not None:
+            self._advance(current_time)
+        cached = self._active_covariance()
+        direct = self._direct_active_covariance()
+        return float(np.max(np.abs(cached - direct), initial=0.0))
 
     def get_covariance(self, current_time: int | None = None) -> np.ndarray:
         if current_time is not None:
@@ -656,6 +692,11 @@ class RayRawEpochFdDsw:
 
     def get_covariance(self) -> np.ndarray:
         return ray.get(self.coordinator.get_covariance.remote(self.time))
+
+    def covariance_cache_error(self) -> float:
+        return float(
+            ray.get(self.coordinator.audit_covariance_cache.remote(self.time))
+        )
 
     def query_with_stats(self) -> tuple[np.ndarray, dict, int]:
         start = time.perf_counter_ns()

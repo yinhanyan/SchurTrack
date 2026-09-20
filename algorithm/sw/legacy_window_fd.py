@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from algorithm.sw.legacy_fast_fd import FrequentDirectionsWithDump
 import numpy as np
 import numpy.typing as npt

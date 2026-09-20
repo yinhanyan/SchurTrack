@@ -17,7 +17,7 @@ by the experimental section:
 - `algorithm/distributed/`: Ray implementations for distributed prefix
   tracking. 
 - `algorithm/dsw/`: Ray implementations for DA2,
-  AeroSketch, and SchurTrack. 
+  AeroSketch, and SchurTrack.
 - `experiments/run_main.py`: common measurement protocol for all four tasks.
 - `experiments/plot_main.py`: generates the 4-by-4 paper figure grid.
 - `experiments/run_attp_randomness.py`: update-time calibration and the
