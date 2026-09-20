@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+
+data/*.npy
+data/*.mat
+data/*.txt
+data/raw/
+data/metadata.json
+results/**
+
+!data/.gitkeep
+!results/.gitkeep
+!figures/.gitkeep
+
