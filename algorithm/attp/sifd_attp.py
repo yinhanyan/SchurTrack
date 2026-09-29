@@ -91,9 +91,6 @@ class SiFdAttp:
             Vt = Vt[:sketch_dim]
 
         s = np.sqrt(np.maximum(sigma_squared, 0.0))
-        self.sigma = s
-        self.Vt = Vt
-
         ret = Vt * s.reshape(-1, 1)
         return ret
 

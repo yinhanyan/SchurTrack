@@ -42,7 +42,8 @@ class FdAttp:
 
             if self.p >= self.ell:
                 # Store the accumulated sketch and its current timestamp.
-                B = self.B.get()
+                # Freeze this timestamped checkpoint before the live FD changes.
+                B = self.B.get().copy()
                 self.full_sketch.append(B)
                 self.full_sketch_time.append(self.time)
                 self.rows_of_snapshots += B.shape[0]
