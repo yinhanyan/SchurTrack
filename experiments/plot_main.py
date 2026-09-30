@@ -190,7 +190,7 @@ def plot_panel(
         loc="best",
         framealpha=0.9,
     )
-    figure.subplots_adjust(left=0.17, right=0.83, bottom=0.20, top=0.95)
+    figure.subplots_adjust(left=0.17, right=0.83, bottom=0.18, top=0.95)
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output)
     figure.savefig(output.with_suffix(".png"), dpi=180)

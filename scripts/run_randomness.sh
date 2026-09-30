@@ -6,7 +6,7 @@ PYTHON=${PYTHON:-python}
 CPU=${SCHUR_CPU:-0}
 CPU_SET=${SCHUR_RANDOMNESS_CPUS:-0-15}
 WORKERS=${SCHUR_RANDOMNESS_WORKERS:-8}
-DATA=${RANDOM_NOISY_DATA:-"${ROOT}/data/random-noisy-10000x500.npy"}
+DATA=${RANDOM_NOISY_DATA:-"${ROOT}/data/random-noisy-16000x500.npy"}
 RESULT=${ROOT}/results/attp-randomness
 
 export OMP_NUM_THREADS=1

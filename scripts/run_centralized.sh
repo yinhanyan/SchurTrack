@@ -5,7 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CPU=${SCHUR_CPU:-0}
 PYTHON=${PYTHON:-python}
 GLOVE=${GLOVE_DATA:-"${ROOT}/data/glove-10000x300.npy"}
-RANDOM_NOISY=${RANDOM_NOISY_DATA:-"${ROOT}/data/random-noisy-10000x500.npy"}
+RANDOM_NOISY=${RANDOM_NOISY_DATA:-"${ROOT}/data/random-noisy-16000x500.npy"}
 
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
@@ -25,11 +25,11 @@ for ell in 5 10 20 30 50 100 125 140; do
     --output-dir "results/main/sw/ell-${ell}"
 done
 
-for ell in 2 5 10 50 100 200 240; do
+for ell in 2 5 10 20 30 50 100 150 200 240; do
   echo "[ATTP] ell=${ell}"
   taskset -c "${CPU}" "${PYTHON}" -m experiments.run_main \
-    --tasks attp --input "${RANDOM_NOISY}" --rows 1500 \
-    --query-step 1 --ell "${ell}" --seed 0 \
+    --tasks attp --input "${RANDOM_NOISY}" --rows 3000 \
+    --query-step 20 --ell "${ell}" --seed 0 \
     --output-dir "results/main/attp/ell-${ell}"
 done
 

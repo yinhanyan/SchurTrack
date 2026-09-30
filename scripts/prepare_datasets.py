@@ -186,24 +186,24 @@ def main() -> None:
         random_noisy = generate_random_noisy(
             seed=args.seed,
             source_rows=50_000,
-            kept_rows=10_000,
+            kept_rows=16_000,
             d=500,
             zeta=5.0,
         )
         source = "generated random-noisy model"
     else:
         random_noisy = load_input_rows(
-            args.random_noisy_source, args.matrix_key, 10_000
+            args.random_noisy_source, args.matrix_key, 16_000
         )
         source = str(args.random_noisy_source.resolve())
-    if random_noisy.shape != (10_000, 500):
+    if random_noisy.shape != (16_000, 500):
         raise ValueError(
-            f"expected random-noisy shape (10000, 500), got {random_noisy.shape}"
+            f"expected random-noisy shape (16000, 500), got {random_noisy.shape}"
         )
 
     outputs = {
         "glove": args.output_dir / "glove-10000x300.npy",
-        "random_noisy": args.output_dir / "random-noisy-10000x500.npy",
+        "random_noisy": args.output_dir / "random-noisy-16000x500.npy",
     }
     np.save(outputs["glove"], np.asarray(glove, dtype=np.float64))
     np.save(

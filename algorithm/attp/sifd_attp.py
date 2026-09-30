@@ -73,9 +73,8 @@ class SiFdAttp:
         self.time += 1
 
     def get(self):
-        """Return the reduced covariance sketch for the current prefix."""
-        residual = self.C.get()
-        ret = residual.T @ residual
+        """Return the reduced covariance sketch of immutable snapshots."""
+        ret = np.zeros((self.d, self.d), dtype=np.float64)
         for i in range(len(self.snapshot_time)):
             Z = self.Zs[i]
             ZCC = self.ZCCs[i]
